@@ -34,6 +34,7 @@ Bssom区别于其它二进制协议在于他有两个特征:
       * [Array Type format](#array-type-format)
       	* [Array1](#array1)
       	* [Array2](#array1)
+      	* [Array3](#array3)
       * [Map Type format](#map-type-format)
       	* [Map1](#map1)
       	* [Map2](#map2)
@@ -51,9 +52,10 @@ Bssom类型系统定义了11个种类
   * **Timestamp** 表示[Unix时间戳](https://en.wikipedia.org/wiki/Unix_time)
   * **Extension** 保证了Bssom在未来拓展的可能性，应用程序应尽可能的对其支持，其含义由Bssom规范决定
   * **Native** 用于应用程序自己创建的本地类型格式，其实现不具备通用性和交互性，其含义由应用程序自己决定
-  * **Array** 表示一组元素的序列,包含了两种序列格式 Array1,Array2  
-  	* *Array1*: 有约束的格式,该序列中的元素都是同一个类型格式,元素类型被单独记录在头部信息中,元素本身将不在保留类型信息,且序列中的每个元素的长度都是相等的
+  * **Array** 表示一组元素的序列,包含了三种序列格式 Array1,Array2,Array3  
+  	* *Array1*: 有约束的格式,该序列中的元素都是同一个类型格式,元素类型被单独记录在头部信息中,元素本身将不再保留类型信息,且序列中的每个元素的宽度都是相等的
 	* *Array2*: 没有约束的格式,每个元素正常拥有自己的类型信息,该序列中的元素可以是任意格式
+	* *Array3*: 格式包含元素的偏移量信息和元素数据,通过数组下标定位到偏移量后直接访问和写入元素,适合需要快速访问和读取非定长元素的结构
   * **Map** 表示键值对,包含了两种键值对格式 Map1,Map2
 	* *Map1*: 格式不包含结构化的元数据信息,编组时不需要预处理,适合快速写入和读取
 	* *Map2*: 格式包含了结构化的元数据信息,将适用于Key的二分查找算法的查找结构给编组成用来路由定位的元数据,通过自动机来进行查找,适合高速的不完整写和不完整读
@@ -102,7 +104,8 @@ Map2            | 11000010               | 0xc2
 (never used)	|						 | 0xc3 - 0xd0
 Array1          | 11010001               | 0xd1
 Array2          | 11010010               | 0xd2
-(never used)	|						 | 0xd3 - 0xf0
+Array3          | 11010011               | 0xd3
+(never used)	|						 | 0xd4 - 0xf0
 ExtendCode      | 11110001               | 0xf1
 NativeCode      | 11110010               | 0xf2
 (never used)	|						 | 0xf4 - 0xff
@@ -304,11 +307,11 @@ Timestamp类型只有一个格式,该格式是由8个字节表示的自Unix Epoc
 
 ### Array Type format
 
-数组类型拥有两种格式,Array1和Array2
+数组类型拥有三种格式: Array1,Array2,Array3.
 
 <a name="array1">**Array1**</a>  
 
-Array1格式是由头部信息和对象序列组成,在头部信息中,包含了元素类型,这意味着数组中的元素不需要存储类型头信息,因此数组元素在Array1中有两点要求: **1**.数组中的元素不能包含类型头, **2**.数组中的元素的宽度都是相同的.  
+Array1格式是由头部信息和元素序列组成,在头部信息中,包含了[元素类型](#补充),这意味着数组中的元素不需要存储类型头信息,因此数组元素在Array1中有两点要求: **1**.数组中的元素不能包含类型头, **2**.数组中的元素的宽度都是相同的.  
 
 *因为Array1的元素都是定长的,因此获取元素和更改元素的访问方式可以通过: ElementsPos + index * eleSize 来获得*
 
@@ -316,14 +319,15 @@ Array1格式是由头部信息和对象序列组成,在头部信息中,包含了
     |  0xd1	 |  ElementType  | Length | Count |    N*Element    |
     +--------+~~~~~~~~~~~~~~~+*------*+*-----*+~~~~~~~~~~~~~~~~~+
 
-	* ElementType:参见 [类型系统](#补充)
+	* ElementsPos是指元素序列的起始位置(Count字段的末尾偏移量)
+	* ElementType:参见类型系统
 	* Length的值是整个数据结束的位置减去Count的起始偏移位置
 	* Count的值是元素的数量
 	* N代表元素的数量
 	
 <a name="array2">**Array2**</a>  
 
-Array2格式是由长度,元素数量,和对象序列组成,与Array1不同,Array2对元素没有任何要求.  
+Array2格式是由长度,元素数量,和元素序列组成,与Array1不同,Array2对元素没有任何要求.  
 
 *因为Array2中的元素没有任何限制,因此获取元素和更改元素的访问方式可以通过: ElementsPos + index * SkipElement 来获得*
 	
@@ -331,9 +335,28 @@ Array2格式是由长度,元素数量,和对象序列组成,与Array1不同,Arra
     |  0xd2	 | Length | Count |    N*Element    |
     +--------+*------*+*-----*+~~~~~~~~~~~~~~~~~+
 
+	* ElementsPos是指元素序列的起始位置(Count字段的末尾偏移量)
 	* Length的值是整个数据结束的位置减去Count的起始偏移位置
 	* Count的值是元素的数量
 
+<a name="array3">**Array3**</a>  
+  
+Array3格式是由长度,元素数量,元素偏移量序列,元素序列组成.
+
+*因为Array3中拥有元素偏移量序列,因此获取元素和更改元素的访问方式可以通过: ElementsPos + GetElementOffset(index) 来获得*
+
+	+--------+*------*+*-----*+~~~~~~~~~~~~~~~~~+~~~~~~~~~~~~~~~~~+
+    |  0xd3	 | Length | Count |  ElementOffsets |    N*Element    |
+    +--------+*------*+*-----*+~~~~~~~~~~~~~~~~~+~~~~~~~~~~~~~~~~~+
+
+	ElementOffsets是由VarUInt格式组成的正整数序列,每个VarUInt对应此下标元素基于ElementsPos的偏移量:
+	+*-------*+*-------*+*-------*+
+    | Offset1 | Offset2 | Offset3 |
+    +*-------*+*-------*+*-------*+	...
+
+	* ElementsPos是指元素序列的起始位置(ElementOffsets段落的末尾偏移量)
+	* Length的值是整个数据结束的位置减去Count的起始偏移位置
+	* Count的值是元素的数量,也代表ElementOffsets中的格式数量
 
 
 ### Map Type format
@@ -492,13 +515,13 @@ NoChildren	  | 代表了当前分支没有子分支 | byte | 32
 NextOff  	  | 代表了当前逻辑中下一个分支的在数据中的相对偏移量 | VarUInt | 
 KeyBytes 	  | 代表了存储的Key的类型数据 | Bianry/UInt64 | 
 ValOffset	  | 代表了Key对应的Value在数据中的相对偏移量 | VarUInt |
-KeyType  	  | 代表了Key的类型  	|   |  
+KeyType  	  | 代表了Key的[类型](#补充)  	|   |  
 
 注解:
 - **Binary**: 一串1-7个字节序列
 - **UInt64**: 小端序的无符号64位整数,因为是整数类型,所以采用小端格式来避免不同平台读取的不同表现
 - **VarInt**: Bssom内部的定义的动长类型.
-- **KeyType**: 参见 [类型系统](#补充)
+- **KeyType**: 参见类型系统
 - **KeyBytes** : 在字长为64位的系统中,判断一个字节和八个字节是否相等的开销基本一致,因此Bssom将Map2的Key的宽度按照8个字节进行拆分,若Key的宽度大于8个字节,则在当前分支中将产生深度,需要由子分支来储存剩余的字节.
 - **相对偏移量**:从DataLen字段的起始位置开始
 
@@ -515,6 +538,7 @@ KeyType  	  | 代表了Key的类型  	|   |
 		->	equalLastN + keyBytes + [Branch]
 		
 		->	LessThen + [Branch] + LessElse + [Branch]
+
 
 
 
